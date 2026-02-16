@@ -1,159 +1,403 @@
 # Notification Platform
 
-Enterprise-grade microservices platform for managing multi-channel notifications — SMS, Email, Push, and In-App — with centralized administration, template management, and delivery tracking.
+Enterprise-grade microservices platform for managing multi-channel notifications (SMS, Email, Push, In-App) with centralized administration, user management, template management, and delivery tracking.
 
-## System Overview
+---
 
-The Notification Platform is built on a **microservices architecture** where each domain concern is isolated into its own independent Laravel application. Services communicate via REST APIs and share no database or runtime state, enabling independent deployment, scaling, and development.
+## Architecture Overview
 
-### Architecture Principles
+The platform is decomposed into **5 independent Laravel services**, each running as its own process on a dedicated port with a dedicated MySQL database. Services communicate exclusively via REST APIs (Guzzle HTTP client). There is no shared state, no shared database, and no shared code between services.
 
-- **Service Isolation**: Each microservice is a standalone Laravel project with its own database, configuration, and dependencies.
-- **API-First**: All inter-service communication happens over HTTP/JSON APIs. No shared code or database coupling.
-- **Database-per-Service**: Each service owns its data via a dedicated MySQL database, ensuring loose coupling and independent schema evolution.
-- **Independent Deployability**: Any service can be updated, restarted, or scaled without affecting others.
+### Core Principles
 
-## Microservices
+- **Service isolation** — Each microservice is a standalone Laravel 12 project with its own database, config, dependencies, and deployment lifecycle.
+- **API-first** — All inter-service communication is synchronous REST over HTTP/JSON. No direct DB access across service boundaries.
+- **Database-per-service** — Each service owns a dedicated MySQL schema. Cross-service data is fetched via API calls, never via JOINs.
+- **UUID public identifiers** — All API routes and responses use UUIDs. Internal database tables use `BIGINT` auto-increment primary keys. Numeric IDs never appear in URLs or API payloads.
+- **Soft deletes** — Main entities (users, notifications, messages, templates) use `deleted_at` columns for auditability.
 
-| Service | Port | Database | Responsibility |
-|---|---|---|---|
-| **Admin Dashboard** | 8000 | `np_admin_dashboard` | Central management UI, system configuration, reporting |
-| **User Service** | 8001 | `np_user_service` | User registration, authentication, roles, permissions |
-| **Notification Service** | 8002 | `np_notification_service` | Notification dispatch, routing, delivery tracking, scheduling |
-| **Messaging Service** | 8003 | `np_messaging_service` | Channel integrations (SMS, Email, Push), provider abstraction |
-| **Template Service** | 8004 | `np_template_service` | Notification templates, variable substitution, versioning |
+---
+
+## Roles and Access Model
+
+There are **two distinct identity types** in the system. They are separate concepts with separate auth flows.
+
+### A) Admins (Dashboard Users)
+
+| Attribute | Detail |
+|---|---|
+| **Auth location** | Admin Dashboard service (`np_admin_dashboard` DB) |
+| **Capabilities** | Full management access via the dashboard |
+| **Roles/Permissions** | Yes — role-based access control (e.g., super-admin, operator, viewer) |
+| **Token type** | Session-based (web) or Sanctum token for dashboard API calls |
+
+Admins can:
+- Log in to the Admin Dashboard
+- View / search / manage users (via User Service API)
+- Create, schedule, and send notifications (via Notification Service API)
+- Manage notification templates (via Template Service API)
+- View delivery statuses and analytics (via Notification + Messaging Service APIs)
+- Manage other admins, roles, and permissions
+
+### B) Users (Notification Recipients)
+
+| Attribute | Detail |
+|---|---|
+| **Auth location** | User Service (`np_user_service` DB) |
+| **Capabilities** | Self-service only |
+| **Roles/Permissions** | **None** — users have no roles or permissions |
+| **Token type** | Sanctum API token |
+
+Users can:
+- Register a new account
+- Log in and receive an API token
+- View and update their own profile
+- Manage their notification preferences (channels, quiet hours)
+- Register device tokens (for push notifications)
+
+Users **cannot** access any admin functionality, manage other users, or interact with notification/template/messaging services directly.
+
+---
+
+## Service Responsibilities
+
+### Admin Dashboard — Port 8000
+
+> **Type:** Laravel web application + internal API consumer
+> **Database:** `np_admin_dashboard`
+
+- Admin authentication (login, logout, session management)
+- Admin CRUD with role/permission assignment
+- Dashboard views: users list, notification history, delivery stats, templates
+- All data is fetched from backend services via REST — this service stores only admin accounts and platform settings
+- Makes outbound HTTP calls to: User Service, Notification Service, Messaging Service, Template Service
+
+### User Service — Port 8001
+
+> **Type:** Laravel API (stateless, JSON)
+> **Database:** `np_user_service`
+
+- User registration and login (Sanctum token auth)
+- User profile CRUD (name, email, phone)
+- Notification preferences per user (email on/off, SMS on/off, push on/off, quiet hours)
+- Device token management (FCM tokens, APNs tokens)
+- Exposes internal API endpoints consumed by Admin Dashboard and Notification Service
+- **Does not** implement roles or permissions — users are flat entities
+
+### Notification Service — Port 8002
+
+> **Type:** Laravel API (stateless, JSON) + queue workers
+> **Database:** `np_notification_service`
+
+- Notification creation and dispatch orchestration
+- Resolves recipients by calling User Service
+- Renders templates by calling Template Service
+- Dispatches messages by calling Messaging Service
+- Scheduling (immediate, delayed, recurring)
+- Delivery status tracking, retry logic
+- Notification history and audit log
+
+### Messaging Service — Port 8003
+
+> **Type:** Laravel API (stateless, JSON) + queue workers
+> **Database:** `np_messaging_service`
+
+- Channel provider abstraction layer (SMS, Email, Push, In-App)
+- Accepts dispatch requests from Notification Service
+- Routes messages to the correct provider (Mailgun, Twilio, FCM, etc.)
+- Provider failover and retry
+- Delivery confirmation, bounce handling
+- Reports delivery status back to Notification Service
+
+### Template Service — Port 8004
+
+> **Type:** Laravel API (stateless, JSON)
+> **Database:** `np_template_service`
+
+- Template CRUD with version history
+- Variable substitution engine (`{{name}}`, `{{code}}`, etc.)
+- Template rendering endpoint (accepts variables, returns compiled output)
+- Multi-channel templates (email subject+body, SMS body, push title+body)
+- Template categories and tagging
+
+---
+
+## Inter-Service Communication Map
+
+```
+Admin Dashboard (8000)
+  |---> User Service (8001)           [List/view users, preferences]
+  |---> Notification Service (8002)   [Create notifications, view statuses]
+  |---> Messaging Service (8003)      [View delivery stats, channel status]
+  |---> Template Service (8004)       [Manage templates]
+
+Notification Service (8002)
+  |---> User Service (8001)           [Resolve recipients + preferences]
+  |---> Template Service (8004)       [Render notification content]
+  |---> Messaging Service (8003)      [Dispatch messages per channel]
+
+Messaging Service (8003)
+  |---> Notification Service (8002)   [Report delivery status via callback]
+  |---> External Providers            [Mailgun, Twilio, FCM, APNs, etc.]
+```
+
+User Service and Template Service are **leaf services** — they do not make outbound calls to other internal services.
+
+---
 
 ## Folder Structure
 
 ```
-notification-platform/
-│
-├── services/
-│   ├── admin-dashboard/          Laravel 12 — Port 8000
-│   ├── user-service/             Laravel 12 — Port 8001
-│   ├── notification-service/     Laravel 12 — Port 8002
-│   ├── messaging-service/        Laravel 12 — Port 8003
-│   └── template-service/         Laravel 12 — Port 8004
-│
-├── docs/
-│   ├── architecture.md           System architecture documentation
-│   ├── api-contracts.md          API endpoint contracts between services
-│   ├── database-design.md        Database schema design per service
-│   └── diagrams/                 Architecture and flow diagrams
-│
-├── postman/
-│   └── Notification-Platform.postman_collection.json
-│
-├── scripts/
-│   ├── start-all.sh              Start all services
-│   └── stop-all.sh               Stop all services
-│
-└── README.md
+notification-platform/               <-- Main repo
+|
+|-- services/
+|   |-- admin-dashboard/             Laravel 12 — Port 8000 (git submodule)
+|   |-- user-service/                Laravel 12 — Port 8001 (git submodule)
+|   |-- notification-service/        Laravel 12 — Port 8002 (git submodule)
+|   |-- messaging-service/           Laravel 12 — Port 8003 (git submodule)
+|   +-- template-service/            Laravel 12 — Port 8004 (git submodule)
+|
+|-- docs/
+|   |-- architecture.md
+|   |-- api-contracts.md
+|   |-- database-design.md
+|   +-- diagrams/
+|
+|-- postman/
+|   +-- Notification-Platform.postman_collection.json
+|
+|-- scripts/
+|   |-- start-all.sh
+|   +-- stop-all.sh
+|
++-- README.md
 ```
 
-## Prerequisites
+---
 
-- **PHP** >= 8.2
-- **Composer** >= 2.x
-- **MySQL** >= 8.0 (via XAMPP or standalone)
-- **Node.js** >= 18.x (for frontend assets, when needed)
+## Database Architecture
 
-## Quick Start
+Each service owns a dedicated MySQL database on the same server. Services never share tables or run cross-database queries.
 
-### 1. Create MySQL Databases
+```
+MySQL Server (127.0.0.1:3306)
+|-- np_admin_dashboard        Admins, roles, permissions, settings
+|-- np_user_service           Users (recipients), preferences, device tokens
+|-- np_notification_service   Notifications, schedules, delivery logs
+|-- np_messaging_service      Messages, channel providers, delivery records
++-- np_template_service       Templates, versions, categories
+```
 
-Connect to MySQL and create one database per service:
+### Creation Script
 
 ```sql
-CREATE DATABASE np_admin_dashboard CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE DATABASE np_user_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE DATABASE np_notification_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE DATABASE np_messaging_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE DATABASE np_template_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_admin_dashboard    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_user_service       CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_notification_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_messaging_service  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_template_service   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-### 2. Run Migrations
+---
+
+## Local Setup
+
+### Prerequisites
+
+| Dependency | Version |
+|---|---|
+| PHP | >= 8.2 |
+| Composer | >= 2.x |
+| MySQL | >= 8.0 |
+| Node.js | >= 18.x (admin-dashboard frontend only) |
+
+### 1. Clone with Submodules
 
 ```bash
-cd services/admin-dashboard && php artisan migrate && cd ../..
-cd services/user-service && php artisan migrate && cd ../..
-cd services/notification-service && php artisan migrate && cd ../..
-cd services/messaging-service && php artisan migrate && cd ../..
-cd services/template-service && php artisan migrate && cd ../..
+git clone --recurse-submodules <main-repo-url>
+cd notification-platform
 ```
 
-### 3. Start All Services
+If already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Install Dependencies (per service)
+
+```bash
+for service in admin-dashboard user-service notification-service messaging-service template-service; do
+    (cd services/$service && composer install && cp .env.example .env && php artisan key:generate)
+done
+```
+
+### 3. Create Databases
+
+Connect to MySQL and run:
+
+```sql
+CREATE DATABASE IF NOT EXISTS np_admin_dashboard    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_user_service       CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_notification_service CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_messaging_service  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS np_template_service   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+### 4. Configure Environment
+
+Edit each service's `.env` file if your MySQL credentials differ from defaults (`root` / no password).
+
+### 5. Run Migrations
+
+```bash
+for service in admin-dashboard user-service notification-service messaging-service template-service; do
+    (cd services/$service && php artisan migrate)
+done
+```
+
+### 6. Start Services
+
+**Option A — All at once:**
 
 ```bash
 ./scripts/start-all.sh
 ```
 
-### 4. Stop All Services
+**Option B — Individually:**
+
+```bash
+cd services/admin-dashboard    && php artisan serve --port=8000 &
+cd services/user-service       && php artisan serve --port=8001 &
+cd services/notification-service && php artisan serve --port=8002 &
+cd services/messaging-service  && php artisan serve --port=8003 &
+cd services/template-service   && php artisan serve --port=8004 &
+```
+
+### 7. Start Queue Workers (required for async processing)
+
+```bash
+cd services/notification-service && php artisan queue:work --queue=default --tries=3 &
+cd services/messaging-service    && php artisan queue:work --queue=default --tries=3 &
+```
+
+### 8. Verify Health
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8001/health
+curl http://localhost:8002/health
+curl http://localhost:8003/health
+curl http://localhost:8004/health
+```
+
+Each returns:
+
+```json
+{
+    "service": "Service Name",
+    "status": "ok",
+    "time": "2026-02-16T12:00:00+00:00"
+}
+```
+
+### 9. Stop Services
 
 ```bash
 ./scripts/stop-all.sh
 ```
 
-### 5. Access Services
+---
 
-| Service | URL |
-|---|---|
-| Admin Dashboard | http://127.0.0.1:8000 |
-| User Service | http://127.0.0.1:8001 |
-| Notification Service | http://127.0.0.1:8002 |
-| Messaging Service | http://127.0.0.1:8003 |
-| Template Service | http://127.0.0.1:8004 |
+## Service Port Map
 
-## Database Architecture
+| Service | Port | Base URL | Health |
+|---|---|---|---|
+| Admin Dashboard | 8000 | `http://localhost:8000` | `GET /health` |
+| User Service | 8001 | `http://localhost:8001/api/v1` | `GET /health` |
+| Notification Service | 8002 | `http://localhost:8002/api/v1` | `GET /health` |
+| Messaging Service | 8003 | `http://localhost:8003/api/v1` | `GET /health` |
+| Template Service | 8004 | `http://localhost:8004/api/v1` | `GET /health` |
 
-Each microservice operates with its own dedicated MySQL database, following the **database-per-service** pattern:
+---
 
-```
-MySQL Server (127.0.0.1:3306)
-├── np_admin_dashboard        → Admin Dashboard service
-├── np_user_service           → User Service
-├── np_notification_service   → Notification Service
-├── np_messaging_service      → Messaging Service
-└── np_template_service       → Template Service
-```
+## Environment Variables Reference
 
-**Why database-per-service?**
+### All Services (common)
 
-- **Loose coupling**: Services cannot directly query another service's data. They must use APIs.
-- **Independent evolution**: Each service can modify its schema without coordinating with others.
-- **Technology flexibility**: A service could switch to a different database engine if needed.
-- **Fault isolation**: A database issue in one service does not cascade to others.
+| Variable | Description | Example |
+|---|---|---|
+| `APP_NAME` | Service display name | `"User Service"` |
+| `APP_ENV` | Environment | `local` |
+| `APP_KEY` | Encryption key (auto-generated) | `base64:...` |
+| `APP_DEBUG` | Debug mode | `true` |
+| `APP_URL` | Service base URL with port | `http://localhost:8001` |
+| `DB_CONNECTION` | Database driver | `mysql` |
+| `DB_HOST` | MySQL host | `127.0.0.1` |
+| `DB_PORT` | MySQL port | `3306` |
+| `DB_DATABASE` | Service-specific database name | `np_user_service` |
+| `DB_USERNAME` | MySQL user | `root` |
+| `DB_PASSWORD` | MySQL password | _(empty for local)_ |
+| `QUEUE_CONNECTION` | Queue driver | `database` |
+| `CACHE_PREFIX` | Unique cache key prefix | `user_service_` |
 
-## Environment Configuration
+### Admin Dashboard (additional)
 
-Each service has its own `.env` file with:
-- Unique `APP_NAME` and `APP_PORT`
-- Dedicated `DB_DATABASE` name
-- Unique `CACHE_PREFIX` to avoid key collisions
-- Independent `APP_KEY` for encryption isolation
+| Variable | Description | Default |
+|---|---|---|
+| `USER_SERVICE_URL` | User Service API base | `http://localhost:8001/api/v1` |
+| `NOTIFICATION_SERVICE_URL` | Notification Service API base | `http://localhost:8002/api/v1` |
+| `MESSAGING_SERVICE_URL` | Messaging Service API base | `http://localhost:8003/api/v1` |
+| `TEMPLATE_SERVICE_URL` | Template Service API base | `http://localhost:8004/api/v1` |
 
-## Future Roadmap
+### Notification Service (additional)
 
-### Log Service (Planned)
+| Variable | Description | Default |
+|---|---|---|
+| `USER_SERVICE_URL` | User Service API base | `http://localhost:8001/api/v1` |
+| `MESSAGING_SERVICE_URL` | Messaging Service API base | `http://localhost:8003/api/v1` |
+| `TEMPLATE_SERVICE_URL` | Template Service API base | `http://localhost:8004/api/v1` |
 
-A dedicated **Log Service** will be introduced to provide:
+### Messaging Service (additional)
 
-- Centralized log aggregation across all microservices
-- Structured logging with correlation IDs for request tracing
-- Log levels: emergency, alert, critical, error, warning, notice, info, debug
-- Dashboard integration for real-time log monitoring
-- Log retention policies and archival
-- Audit trail for security-sensitive operations
+| Variable | Description | Default |
+|---|---|---|
+| `NOTIFICATION_SERVICE_URL` | Notification Service API base | `http://localhost:8002/api/v1` |
+| `SMS_PROVIDER` | SMS provider name | _(not set)_ |
+| `SMS_API_KEY` | SMS provider API key | _(not set)_ |
+| `PUSH_PROVIDER` | Push provider name | _(not set)_ |
+| `FCM_SERVER_KEY` | Firebase Cloud Messaging key | _(not set)_ |
 
-Target port: **8005**
-Target database: `np_log_service`
+### User Service / Template Service
+
+No additional inter-service environment variables required (leaf services).
+
+---
 
 ## Development Guidelines
 
-- Each service is developed and tested independently.
-- Use API contracts (see `docs/api-contracts.md`) when building inter-service communication.
-- Run `php artisan test` within each service directory for service-level testing.
-- Never share Eloquent models or database connections between services.
+- Each service is developed, tested, and versioned independently.
+- Never share Eloquent models, migrations, or database connections across services.
+- Use `config('services.user_service.base_url')` to reference other service URLs — never hardcode.
+- All API routes are versioned under `/api/v1/`.
+- Use UUIDs in all API route parameters and response payloads. Never expose numeric IDs.
+- Main entities must use soft deletes (`SoftDeletes` trait).
+- Run `php artisan test` inside each service directory for isolated testing.
+- See `docs/api-contracts.md` for inter-service endpoint specifications.
+
+---
+
+## Future Roadmap
+
+### Log Service (Planned — Port 8005)
+
+- Centralized log aggregation across all services
+- Structured logging with correlation IDs for distributed tracing
+- Real-time log monitoring in Admin Dashboard
+- Audit trail for security-sensitive operations
+- Database: `np_log_service`
+
+---
 
 ## License
 
