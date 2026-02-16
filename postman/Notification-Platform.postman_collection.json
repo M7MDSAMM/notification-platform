@@ -1,0 +1,421 @@
+{
+    "info": {
+        "name": "Notification Platform",
+        "description": "API collection for the Notification Platform microservices.",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "admin_url",
+            "value": "http://127.0.0.1:8000/api"
+        },
+        {
+            "key": "user_url",
+            "value": "http://127.0.0.1:8001/api"
+        },
+        {
+            "key": "notification_url",
+            "value": "http://127.0.0.1:8002/api"
+        },
+        {
+            "key": "messaging_url",
+            "value": "http://127.0.0.1:8003/api"
+        },
+        {
+            "key": "template_url",
+            "value": "http://127.0.0.1:8004/api"
+        },
+        {
+            "key": "token",
+            "value": ""
+        }
+    ],
+    "item": [
+        {
+            "name": "User Service",
+            "item": [
+                {
+                    "name": "Auth",
+                    "item": [
+                        {
+                            "name": "Login",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json"
+                                    },
+                                    {
+                                        "key": "Accept",
+                                        "value": "application/json"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"password\"\n}"
+                                },
+                                "url": {
+                                    "raw": "{{user_url}}/auth/login",
+                                    "host": ["{{user_url}}"],
+                                    "path": ["auth", "login"]
+                                }
+                            }
+                        },
+                        {
+                            "name": "Get Authenticated User",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Accept",
+                                        "value": "application/json"
+                                    },
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Bearer {{token}}"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{user_url}}/auth/me",
+                                    "host": ["{{user_url}}"],
+                                    "path": ["auth", "me"]
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Users",
+                    "item": [
+                        {
+                            "name": "List Users",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Accept",
+                                        "value": "application/json"
+                                    },
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Bearer {{token}}"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{user_url}}/users",
+                                    "host": ["{{user_url}}"],
+                                    "path": ["users"]
+                                }
+                            }
+                        },
+                        {
+                            "name": "Create User",
+                            "request": {
+                                "method": "POST",
+                                "header": [
+                                    {
+                                        "key": "Content-Type",
+                                        "value": "application/json"
+                                    },
+                                    {
+                                        "key": "Accept",
+                                        "value": "application/json"
+                                    },
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Bearer {{token}}"
+                                    }
+                                ],
+                                "body": {
+                                    "mode": "raw",
+                                    "raw": "{\n    \"name\": \"John Doe\",\n    \"email\": \"john@example.com\",\n    \"phone\": \"+1234567890\",\n    \"password\": \"password\",\n    \"password_confirmation\": \"password\"\n}"
+                                },
+                                "url": {
+                                    "raw": "{{user_url}}/users",
+                                    "host": ["{{user_url}}"],
+                                    "path": ["users"]
+                                }
+                            }
+                        },
+                        {
+                            "name": "Get User",
+                            "request": {
+                                "method": "GET",
+                                "header": [
+                                    {
+                                        "key": "Accept",
+                                        "value": "application/json"
+                                    },
+                                    {
+                                        "key": "Authorization",
+                                        "value": "Bearer {{token}}"
+                                    }
+                                ],
+                                "url": {
+                                    "raw": "{{user_url}}/users/1",
+                                    "host": ["{{user_url}}"],
+                                    "path": ["users", "1"]
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Notification Service",
+            "item": [
+                {
+                    "name": "List Notifications",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{notification_url}}/notifications",
+                            "host": ["{{notification_url}}"],
+                            "path": ["notifications"]
+                        }
+                    }
+                },
+                {
+                    "name": "Create Notification",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"user_id\": 1,\n    \"template_id\": 1,\n    \"channel\": \"email\",\n    \"priority\": \"normal\",\n    \"variables\": {\n        \"name\": \"John\",\n        \"message\": \"Welcome to our platform!\"\n    }\n}"
+                        },
+                        "url": {
+                            "raw": "{{notification_url}}/notifications",
+                            "host": ["{{notification_url}}"],
+                            "path": ["notifications"]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Messaging Service",
+            "item": [
+                {
+                    "name": "Send Message",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"channel\": \"email\",\n    \"recipient\": \"john@example.com\",\n    \"subject\": \"Welcome\",\n    \"body\": \"Hello John, welcome to our platform!\",\n    \"notification_id\": 1\n}"
+                        },
+                        "url": {
+                            "raw": "{{messaging_url}}/messages/send",
+                            "host": ["{{messaging_url}}"],
+                            "path": ["messages", "send"]
+                        }
+                    }
+                },
+                {
+                    "name": "List Channels",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{messaging_url}}/messages/channels",
+                            "host": ["{{messaging_url}}"],
+                            "path": ["messages", "channels"]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Template Service",
+            "item": [
+                {
+                    "name": "List Templates",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{template_url}}/templates",
+                            "host": ["{{template_url}}"],
+                            "path": ["templates"]
+                        }
+                    }
+                },
+                {
+                    "name": "Create Template",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Welcome Email\",\n    \"channel\": \"email\",\n    \"subject\": \"Welcome, {{name}}!\",\n    \"body\": \"Hello {{name}}, welcome to our platform. Your account has been created successfully.\",\n    \"variables\": [\"name\"],\n    \"category\": \"onboarding\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{template_url}}/templates",
+                            "host": ["{{template_url}}"],
+                            "path": ["templates"]
+                        }
+                    }
+                },
+                {
+                    "name": "Render Template",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"variables\": {\n        \"name\": \"John Doe\"\n    }\n}"
+                        },
+                        "url": {
+                            "raw": "{{template_url}}/templates/1/render",
+                            "host": ["{{template_url}}"],
+                            "path": ["templates", "1", "render"]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Health Checks",
+            "item": [
+                {
+                    "name": "Admin Dashboard Health",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "http://127.0.0.1:8000/up",
+                            "host": ["http://127.0.0.1:8000"],
+                            "path": ["up"]
+                        }
+                    }
+                },
+                {
+                    "name": "User Service Health",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "http://127.0.0.1:8001/up",
+                            "host": ["http://127.0.0.1:8001"],
+                            "path": ["up"]
+                        }
+                    }
+                },
+                {
+                    "name": "Notification Service Health",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "http://127.0.0.1:8002/up",
+                            "host": ["http://127.0.0.1:8002"],
+                            "path": ["up"]
+                        }
+                    }
+                },
+                {
+                    "name": "Messaging Service Health",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "http://127.0.0.1:8003/up",
+                            "host": ["http://127.0.0.1:8003"],
+                            "path": ["up"]
+                        }
+                    }
+                },
+                {
+                    "name": "Template Service Health",
+                    "request": {
+                        "method": "GET",
+                        "url": {
+                            "raw": "http://127.0.0.1:8004/up",
+                            "host": ["http://127.0.0.1:8004"],
+                            "path": ["up"]
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}
