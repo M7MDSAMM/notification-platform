@@ -1,0 +1,15 @@
+[submodule "services/admin-dashboard"]
+	path = services/admin-dashboard
+	url = git@github.com:M7MDSAMM/np-admin-dashboard.git
+[submodule "services/user-service"]
+	path = services/user-service
+	url = git@github.com:M7MDSAMM/np-user-service.git
+[submodule "services/notification-service"]
+	path = services/notification-service
+	url = git@github.com:M7MDSAMM/np-notification-service.git
+[submodule "services/messaging-service"]
+	path = services/messaging-service
+	url = git@github.com:M7MDSAMM/np-messaging-service.git
+[submodule "services/template-service"]
+	path = services/template-service
+	url = git@github.com:M7MDSAMM/np-template-service.git
