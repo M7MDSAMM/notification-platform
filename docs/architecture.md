@@ -1,112 +1,93 @@
-# System Architecture
+# Notification Platform Architecture
 
-## Overview
+## Services & Ports
+| Service | Type | Port | Primary Responsibilities | Data Ownership |
+| --- | --- | --- | --- | --- |
+| Admin Dashboard | Laravel web app (server-rendered) | 8000 | Admin UI, session auth, orchestration of user/template/notification actions via internal APIs | Admin accounts, dashboard settings |
+| User Service | Laravel API (stateless JSON) | 8001 | Admin auth (JWT), admin profile, recipient user CRUD, preferences, devices | Admins, Users, Preferences, Devices |
+| Notification Service | Laravel API + workers | 8002 | Notification creation, scheduling, rendering coordination, delivery tracking | Notifications, Schedules, Delivery logs |
+| Messaging Service | Laravel API + workers | 8003 | Channel provider abstraction, dispatch, provider failover, delivery callbacks | Messages, Provider configs |
+| Template Service | Laravel API | 8004 | Template CRUD, versioning, rendering | Templates, Template versions |
 
-The Notification Platform follows a **microservices architecture** pattern where the system is decomposed into small, independently deployable services organized around business capabilities.
+## Auth Model
+- **Admin authentication** is issued by **User Service** (`POST /api/v1/admin/auth/login`). Returns a JWT (`access_token`, `expires_in`, `token_type`).
+- Admin Dashboard stores the JWT server-side in the session and caches the admin profile fetched from `GET /api/v1/admin/me`. Browser only holds the session cookie.
+- Admin routes in User Service require the `Authorization: Bearer <JWT>` header; dashboard enforces its own session middleware before rendering pages.
+- Recipient users (non-admin) are managed via User Service APIs; no roles/permissions for users.
 
-## Architecture Diagram
+## Data Ownership
+- Each service owns its database schema; no cross-service DB access.
+- Admins and recipient user records live in **User Service**; Admin Dashboard persists only admin session state and UI settings.
+- Notifications, templates, messages, and preferences remain within their respective services; cross-service reads are via HTTP calls only.
 
-```
-                    ┌──────────────────────┐
-                    │   Admin Dashboard    │
-                    │     (Port 8000)      │
-                    └──────────┬───────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-              ▼                ▼                ▼
-   ┌──────────────────┐ ┌───────────────┐ ┌──────────────────┐
-   │  User Service    │ │  Notification │ │ Template Service │
-   │   (Port 8001)   │ │   Service     │ │   (Port 8004)    │
-   └──────────────────┘ │ (Port 8002)   │ └──────────────────┘
-                        └───────┬───────┘
-                                │
-                                ▼
-                     ┌──────────────────┐
-                     │ Messaging Service│
-                     │   (Port 8003)    │
-                     └──────────────────┘
-                                │
-                    ┌───────────┼───────────┐
-                    ▼           ▼           ▼
-               ┌────────┐ ┌────────┐ ┌──────────┐
-               │  SMS   │ │ Email  │ │   Push   │
-               │Provider│ │Provider│ │ Provider │
-               └────────┘ └────────┘ └──────────┘
-```
+## Correlation ID Propagation
+- Middleware in both Admin Dashboard and User Service ensures every request has `X-Correlation-Id` (generated as UUID when absent) and echoes it in responses.
+- Admin Dashboard forwards the same header on outbound calls to User Service so request chains can be traced end-to-end.
+- Structured JSON logs include `correlation_id` for inbound and outbound events.
 
-## Service Responsibilities
+## Diagrams
 
-### Admin Dashboard (Port 8000)
-- Central management interface
-- System-wide configuration and settings
-- Reporting and analytics dashboard
-- Service health monitoring
-- Role-based access to platform features
-
-### User Service (Port 8001)
-- User registration and profile management
-- Authentication (API tokens, sessions)
-- Role and permission management
-- User preferences (notification channels, quiet hours)
-- API key management for external integrations
-
-### Notification Service (Port 8002)
-- Notification creation and dispatch orchestration
-- Delivery scheduling (immediate, delayed, recurring)
-- Delivery status tracking and retry logic
-- Notification history and audit log
-- Priority and rate limiting
-
-### Messaging Service (Port 8003)
-- Channel provider abstraction (SMS, Email, Push, In-App)
-- Provider failover and load balancing
-- Message formatting per channel
-- Delivery confirmation and bounce handling
-- Provider credential management
-
-### Template Service (Port 8004)
-- Template CRUD with version control
-- Variable substitution engine
-- Multi-language template support
-- Template preview and validation
-- Template categories and tagging
-
-## Communication Patterns
-
-### Synchronous (REST API)
-- Admin Dashboard → User Service (user management)
-- Admin Dashboard → Template Service (template management)
-- Notification Service → Template Service (template rendering)
-- Notification Service → User Service (recipient resolution)
-- Notification Service → Messaging Service (message dispatch)
-
-### Request Flow Example
-
-```
-1. Admin creates notification via Dashboard
-2. Dashboard → Notification Service: POST /api/notifications
-3. Notification Service → User Service: GET /api/users/{id}/preferences
-4. Notification Service → Template Service: POST /api/templates/{id}/render
-5. Notification Service → Messaging Service: POST /api/messages/send
-6. Messaging Service → External Provider (SMS/Email/Push)
-7. Messaging Service → Notification Service: Webhook delivery status
+### System Context
+```mermaid
+graph LR
+    Admin[Admin User] -->|HTTPS\nSession cookie| AD[Admin Dashboard :8000]
+    AD -->|REST JSON\nAuthorization: Bearer| US[User Service :8001]
+    AD -->|REST JSON| NS[Notification Service :8002]
+    AD -->|REST JSON| TS[Template Service :8004]
+    AD -->|REST JSON| MS[Messaging Service :8003]
+    NS --> TS
+    NS --> US
+    NS --> MS
+    MS --> Ext[External Providers\n(Twilio, Mailgun, FCM, APNs)]
 ```
 
-## Data Isolation
+### Sequence: Admin Login
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant AD as Admin Dashboard (:8000)
+    participant US as User Service (:8001)
+    Admin->>AD: GET /login
+    AD-->>Admin: Render login form (sets/forwards X-Correlation-Id)
+    Admin->>AD: POST /login (email, password)
+    AD->>US: POST /api/v1/admin/auth/login<br/>Headers: X-Correlation-Id, Accept: application/json
+    US-->>AD: 200 {access_token, token_type, expires_in}
+    AD->>US: GET /api/v1/admin/me<br/>Authorization: Bearer access_token
+    US-->>AD: 200 {admin profile}
+    AD-->>Admin: Redirect / (session set with JWT + profile)
+```
 
-Each service maintains its own:
-- MySQL database (prefixed with `np_`)
-- Laravel migrations and seeders
-- Eloquent models
-- Cache namespace (via `CACHE_PREFIX`)
-- Session storage
-- Queue workers
+### Sequence: User Management (list users)
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant AD as Admin Dashboard
+    participant US as User Service
+    Admin->>AD: GET /users
+    AD->>US: GET /api/v1/users<br/>Authorization: Bearer admin JWT<br/>X-Correlation-Id
+    US-->>AD: 200 {data: [users], meta.pagination}
+    AD-->>Admin: Render users table
+```
 
-## Security Considerations
+### Component Diagram (logical)
+```mermaid
+graph TD
+    subgraph Admin Dashboard (:8000)
+        UI[Blade Views / Controllers]
+        AuthSess[Session Auth\nstores admin JWT]
+        Client[UserServiceClient\n(Guzzle)]
+        UI --> AuthSess
+        UI --> Client
+    end
 
-- Inter-service authentication via API tokens (to be implemented)
-- CORS configuration per service
-- Rate limiting on all public API endpoints
-- Input validation at service boundaries
-- Encrypted sensitive configuration via `.env`
+    subgraph User Service (:8001)
+        Middleware[Correlation & JWT Middleware]
+        Controllers[Admin/User Controllers]
+        Domain[Domain Services]
+        DB[(MySQL np_user_service)]
+        Controllers --> Domain --> DB
+    end
+
+    UI -->|REST| Controllers
+    Client -->|REST| Controllers
+```
