@@ -198,6 +198,19 @@ CREATE DATABASE IF NOT EXISTS np_messaging_service  CHARACTER SET utf8mb4 COLLAT
 CREATE DATABASE IF NOT EXISTS np_template_service   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
+## Service Ports
+
+| Service | Port | Description |
+| --- | --- | --- |
+| Admin Dashboard | 8000 | Admin UI and orchestration layer |
+| User Service | 8001 | Admin auth + recipient users API |
+| Notification Service | 8002 | Notification orchestration & scheduling |
+| Messaging Service | 8003 | Channel dispatch & provider abstraction |
+| Template Service | 8004 | Template CRUD and rendering |
+
+## Additional Documentation
+- [Architecture](docs/architecture.md)
+
 ---
 
 ## Local Setup
