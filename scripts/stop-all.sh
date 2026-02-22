@@ -12,8 +12,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PID_DIR="$PROJECT_ROOT/.pids"
 
 SERVICE_ORDER=(
-    "admin-dashboard-php"
-    "admin-dashboard-vite"
+    "admin-dashboard"
     "user-service"
     "notification-service"
     "messaging-service"
