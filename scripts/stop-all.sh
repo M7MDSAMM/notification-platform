@@ -12,7 +12,8 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PID_DIR="$PROJECT_ROOT/.pids"
 
 SERVICE_ORDER=(
-    "admin-dashboard"
+    "admin-dashboard-php"
+    "admin-dashboard-vite"
     "user-service"
     "notification-service"
     "messaging-service"
@@ -42,6 +43,7 @@ STOPPED=0
 NOT_RUNNING=0
 
 for SERVICE in "${SERVICE_ORDER[@]}"; do
+    # Map pid file names to service entries (match start-all)
     PID_FILE="$PID_DIR/$SERVICE.pid"
 
     if [[ ! -f "$PID_FILE" ]]; then

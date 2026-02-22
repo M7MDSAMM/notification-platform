@@ -13,18 +13,21 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVICES_DIR="$PROJECT_ROOT/services"
 PID_DIR="$PROJECT_ROOT/.pids"
 
-# Service definitions: name → port
+# Service definitions: name → "port|command"
+# We treat admin-dashboard frontend (Vite) as its own entry so that start/stop covers all running parts.
 declare -A SERVICES=(
-    ["admin-dashboard"]=8000
-    ["user-service"]=8001
-    ["notification-service"]=8002
-    ["messaging-service"]=8003
-    ["template-service"]=8004
+    ["admin-dashboard-php"]="8000|php artisan serve --host=127.0.0.1 --port=8000"
+    ["admin-dashboard-vite"]="5173|npm run dev -- --host --port 5173"
+    ["user-service"]="8001|php artisan serve --host=127.0.0.1 --port=8001"
+    ["notification-service"]="8002|php artisan serve --host=127.0.0.1 --port=8002"
+    ["messaging-service"]="8003|php artisan serve --host=127.0.0.1 --port=8003"
+    ["template-service"]="8004|php artisan serve --host=127.0.0.1 --port=8004"
 )
 
-# Ordered list for consistent startup sequence
+# Ordered list for consistent startup sequence (PHP first, then Vite)
 SERVICE_ORDER=(
-    "admin-dashboard"
+    "admin-dashboard-php"
+    "admin-dashboard-vite"
     "user-service"
     "notification-service"
     "messaging-service"
@@ -64,7 +67,7 @@ done
 
 if [[ "$ALREADY_RUNNING" == true ]]; then
     echo ""
-    echo -e "${YELLOW}Some services are already running. Stop them first with stop-all.sh${NC}"
+    echo -e "${YELLOW}Some services are already running. Stop them first with stop-all.sh or let this script start the missing ones only.${NC}"
     echo ""
 fi
 
@@ -73,8 +76,13 @@ STARTED=0
 FAILED=0
 
 for SERVICE in "${SERVICE_ORDER[@]}"; do
-    PORT=${SERVICES[$SERVICE]}
-    SERVICE_PATH="$SERVICES_DIR/$SERVICE"
+    ENTRY=${SERVICES[$SERVICE]}
+    PORT="${ENTRY%%|*}"
+    CMD="${ENTRY#*|}"
+
+    # Map service name to directory (strip suffix like -php or -vite)
+    BASE_SERVICE="${SERVICE%%-*}"
+    SERVICE_PATH="$SERVICES_DIR/$BASE_SERVICE"
     PID_FILE="$PID_DIR/$SERVICE.pid"
     LOG_FILE="$PID_DIR/$SERVICE.log"
 
@@ -90,15 +98,15 @@ for SERVICE in "${SERVICE_ORDER[@]}"; do
         continue
     fi
 
-    # Verify artisan exists
-    if [[ ! -f "$SERVICE_PATH/artisan" ]]; then
+    # Verify artisan exists for PHP services; skip check for Vite entry
+    if [[ "$SERVICE" != "admin-dashboard-vite" && ! -f "$SERVICE_PATH/artisan" ]]; then
         echo -e "${RED}[FAIL]${NC} $SERVICE - Not a Laravel project (artisan not found)"
         ((FAILED++))
         continue
     fi
 
-    # Start the service
-    php "$SERVICE_PATH/artisan" serve --host=127.0.0.1 --port="$PORT" > "$LOG_FILE" 2>&1 &
+    # Start the service (run in its directory)
+    (cd "$SERVICE_PATH" && $CMD > "$LOG_FILE" 2>&1 &)
     PID=$!
     echo "$PID" > "$PID_FILE"
 
@@ -123,7 +131,8 @@ echo ""
 if [[ $STARTED -gt 0 ]]; then
     echo -e "Service URLs:"
     for SERVICE in "${SERVICE_ORDER[@]}"; do
-        PORT=${SERVICES[$SERVICE]}
+        ENTRY=${SERVICES[$SERVICE]}
+        PORT="${ENTRY%%|*}"
         PID_FILE="$PID_DIR/$SERVICE.pid"
         if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             echo -e "  ${CYAN}$SERVICE${NC} → http://127.0.0.1:$PORT"
