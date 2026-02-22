@@ -48,7 +48,7 @@ for SERVICE in "${SERVICE_ORDER[@]}"; do
 
     if [[ ! -f "$PID_FILE" ]]; then
         echo -e "${YELLOW}[SKIP]${NC} $SERVICE - No PID file found"
-        ((NOT_RUNNING++))
+        NOT_RUNNING=$((NOT_RUNNING + 1))
         continue
     fi
 
@@ -72,10 +72,10 @@ for SERVICE in "${SERVICE_ORDER[@]}"; do
         else
             echo -e "${GREEN}[OK]${NC}   $SERVICE stopped (PID: $PID)"
         fi
-        ((STOPPED++))
+        STOPPED=$((STOPPED + 1))
     else
         echo -e "${YELLOW}[SKIP]${NC} $SERVICE - Process not running (stale PID: $PID)"
-        ((NOT_RUNNING++))
+        NOT_RUNNING=$((NOT_RUNNING + 1))
     fi
 
     rm -f "$PID_FILE"

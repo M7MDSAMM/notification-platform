@@ -13,21 +13,18 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVICES_DIR="$PROJECT_ROOT/services"
 PID_DIR="$PROJECT_ROOT/.pids"
 
-# Service definitions: name → "port|command"
-# We treat admin-dashboard frontend (Vite) as its own entry so that start/stop covers all running parts.
+# Service definitions: name → port (standard Laravel serve)
 declare -A SERVICES=(
-    ["admin-dashboard-php"]="8000|php artisan serve --host=127.0.0.1 --port=8000"
-    ["admin-dashboard-vite"]="5173|npm run dev -- --host --port 5173"
-    ["user-service"]="8001|php artisan serve --host=127.0.0.1 --port=8001"
-    ["notification-service"]="8002|php artisan serve --host=127.0.0.1 --port=8002"
-    ["messaging-service"]="8003|php artisan serve --host=127.0.0.1 --port=8003"
-    ["template-service"]="8004|php artisan serve --host=127.0.0.1 --port=8004"
+    ["admin-dashboard"]=8000
+    ["user-service"]=8001
+    ["notification-service"]=8002
+    ["messaging-service"]=8003
+    ["template-service"]=8004
 )
 
-# Ordered list for consistent startup sequence (PHP first, then Vite)
+# Ordered list for consistent startup sequence
 SERVICE_ORDER=(
-    "admin-dashboard-php"
-    "admin-dashboard-vite"
+    "admin-dashboard"
     "user-service"
     "notification-service"
     "messaging-service"
@@ -76,13 +73,8 @@ STARTED=0
 FAILED=0
 
 for SERVICE in "${SERVICE_ORDER[@]}"; do
-    ENTRY=${SERVICES[$SERVICE]}
-    PORT="${ENTRY%%|*}"
-    CMD="${ENTRY#*|}"
-
-    # Map service name to directory (strip suffix like -php or -vite)
-    BASE_SERVICE="${SERVICE%%-*}"
-    SERVICE_PATH="$SERVICES_DIR/$BASE_SERVICE"
+    PORT=${SERVICES[$SERVICE]}
+    SERVICE_PATH="$SERVICES_DIR/$SERVICE"
     PID_FILE="$PID_DIR/$SERVICE.pid"
     LOG_FILE="$PID_DIR/$SERVICE.log"
 
@@ -98,27 +90,26 @@ for SERVICE in "${SERVICE_ORDER[@]}"; do
         continue
     fi
 
-    # Verify artisan exists for PHP services; skip check for Vite entry
-    if [[ "$SERVICE" != "admin-dashboard-vite" && ! -f "$SERVICE_PATH/artisan" ]]; then
+    # Verify artisan exists
+    if [[ ! -f "$SERVICE_PATH/artisan" ]]; then
         echo -e "${RED}[FAIL]${NC} $SERVICE - Not a Laravel project (artisan not found)"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         continue
     fi
 
-    # Start the service (run in its directory)
-    (cd "$SERVICE_PATH" && $CMD > "$LOG_FILE" 2>&1 &)
-    PID=$!
+    # Start the service (run in its directory) and capture PID
+    PID=$( (cd "$SERVICE_PATH" && php artisan serve --host=127.0.0.1 --port="$PORT" > "$LOG_FILE" 2>&1 & echo $!) )
     echo "$PID" > "$PID_FILE"
 
     # Brief pause to check if process started successfully
     sleep 0.5
     if kill -0 "$PID" 2>/dev/null; then
         echo -e "${GREEN}[OK]${NC}   $SERVICE started on port ${CYAN}$PORT${NC} (PID: $PID)"
-        ((STARTED++))
+        STARTED=$((STARTED + 1))
     else
         echo -e "${RED}[FAIL]${NC} $SERVICE failed to start on port $PORT"
         rm -f "$PID_FILE"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
     fi
 done
 
