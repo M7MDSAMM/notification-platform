@@ -1,115 +1,57 @@
 # API Contracts
 
-This document defines the REST API contracts between microservices in the Notification Platform. All endpoints follow JSON:API conventions with consistent error handling.
+REST API contracts between microservices in the Notification Platform. All endpoints return standardized JSON envelopes (see [api-response-standard.md](api-response-standard.md)).
+
+---
 
 ## Conventions
 
-- **Base URL**: `http://127.0.0.1:{port}/api`
+- **Base URL**: `http://localhost:{port}/api/v1`
 - **Content-Type**: `application/json`
-- **Authentication**: Bearer token (to be implemented)
-- **Versioning**: URI-based (`/api/v1/...`) when multiple versions are needed
-
-### Standard Response Format
-
-**Success:**
-```json
-{
-    "success": true,
-    "data": { },
-    "message": "Operation completed successfully"
-}
-```
-
-**Error:**
-```json
-{
-    "success": false,
-    "message": "Validation failed",
-    "errors": {
-        "field": ["Error message"]
-    }
-}
-```
-
-### Standard HTTP Status Codes
-
-| Code | Usage |
-|---|---|
-| 200 | Successful GET/PUT/PATCH |
-| 201 | Successful POST (resource created) |
-| 204 | Successful DELETE (no content) |
-| 400 | Bad request / validation error |
-| 401 | Unauthorized |
-| 403 | Forbidden |
-| 404 | Resource not found |
-| 422 | Unprocessable entity |
-| 429 | Rate limit exceeded |
-| 500 | Internal server error |
+- **Authentication**: RS256 JWT Bearer token (issued by User Service)
+- **Tracing**: `X-Correlation-Id` header on all requests/responses
+- **Identifiers**: UUIDs in all route parameters and response payloads
 
 ---
 
 ## User Service (Port 8001)
 
-### Users
+### Admin Authentication
 
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/users` | List all users (paginated) |
-| POST | `/api/users` | Create a new user |
-| GET | `/api/users/{id}` | Get user by ID |
-| PUT | `/api/users/{id}` | Update user |
-| DELETE | `/api/users/{id}` | Delete user |
-| GET | `/api/users/{id}/preferences` | Get user notification preferences |
-| PUT | `/api/users/{id}/preferences` | Update user notification preferences |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/admin/auth/login` | Public | Authenticate admin, returns JWT |
+| `GET` | `/api/v1/admin/me` | Admin | Get authenticated admin profile |
 
-### Authentication
+### Admin Management
 
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/auth/login` | Authenticate and receive token |
-| POST | `/api/auth/logout` | Revoke current token |
-| GET | `/api/auth/me` | Get authenticated user profile |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/admins` | Super Admin | List admins (paginated) |
+| `POST` | `/api/v1/admins` | Super Admin | Create admin |
+| `GET` | `/api/v1/admins/{uuid}` | Super Admin | Get admin by UUID |
+| `PUT` | `/api/v1/admins/{uuid}` | Super Admin | Update admin |
+| `PATCH` | `/api/v1/admins/{uuid}/toggle-active` | Super Admin | Toggle admin active status |
 
----
+### Recipient Users
 
-## Notification Service (Port 8002)
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/users` | Admin | List users (paginated, filterable) |
+| `POST` | `/api/v1/users` | Admin | Create user |
+| `GET` | `/api/v1/users/{uuid}` | Admin | Get user by UUID |
+| `PUT` | `/api/v1/users/{uuid}` | Admin | Update user |
+| `DELETE` | `/api/v1/users/{uuid}` | Admin | Soft-delete user |
 
-### Notifications
+### Preferences & Devices
 
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/notifications` | List notifications (paginated, filterable) |
-| POST | `/api/notifications` | Create and dispatch a notification |
-| GET | `/api/notifications/{id}` | Get notification details with delivery status |
-| DELETE | `/api/notifications/{id}` | Cancel a pending notification |
-| GET | `/api/notifications/{id}/status` | Get delivery status breakdown by channel |
-
-### Scheduling
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/notifications/schedule` | Schedule a notification for future delivery |
-| GET | `/api/notifications/scheduled` | List scheduled notifications |
-| DELETE | `/api/notifications/scheduled/{id}` | Cancel a scheduled notification |
-
----
-
-## Messaging Service (Port 8003)
-
-### Messages
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/messages/send` | Send a message via specified channel |
-| GET | `/api/messages/{id}/status` | Get message delivery status |
-| GET | `/api/messages/channels` | List available channels and their status |
-
-### Webhooks (Inbound)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/api/webhooks/delivery-status` | Receive delivery status from providers |
-| POST | `/api/webhooks/bounce` | Receive bounce notifications |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/users/{uuid}/preferences` | Admin | Get notification preferences |
+| `PUT` | `/api/v1/users/{uuid}/preferences` | Admin | Update notification preferences |
+| `GET` | `/api/v1/users/{uuid}/devices` | Admin | List device tokens |
+| `POST` | `/api/v1/users/{uuid}/devices` | Admin | Register device token |
+| `DELETE` | `/api/v1/users/{uuid}/devices/{deviceUuid}` | Admin | Delete device token |
 
 ---
 
@@ -117,15 +59,86 @@ This document defines the REST API contracts between microservices in the Notifi
 
 ### Templates
 
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/templates` | List all templates (paginated) |
-| POST | `/api/templates` | Create a new template |
-| GET | `/api/templates/{id}` | Get template by ID |
-| PUT | `/api/templates/{id}` | Update template |
-| DELETE | `/api/templates/{id}` | Delete template |
-| POST | `/api/templates/{id}/render` | Render template with variables |
-| GET | `/api/templates/{id}/versions` | List template version history |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/templates` | Super Admin | List templates (filterable by key, channel, is_active) |
+| `POST` | `/api/v1/templates` | Super Admin | Create template |
+| `GET` | `/api/v1/templates/{key}` | Super Admin | Get template by key |
+| `PUT` | `/api/v1/templates/{key}` | Super Admin | Update template (auto-increments version) |
+| `DELETE` | `/api/v1/templates/{key}` | Super Admin | Soft-delete template |
+
+### Rendering
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/templates/{key}/render` | Admin | Render template with variables |
+
+---
+
+## Notification Service (Port 8002)
+
+### Notifications
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/v1/notifications` | Admin | List notifications (filterable by status, user_uuid, template_key) |
+| `POST` | `/api/v1/notifications` | Admin | Create and orchestrate notification |
+| `GET` | `/api/v1/notifications/{uuid}` | Admin | Get notification with attempts |
+| `POST` | `/api/v1/notifications/{uuid}/retry` | Admin | Retry failed notification |
+
+### Create Notification Request Body
+
+```json
+{
+  "user_uuid": "string (required, uuid)",
+  "template_key": "string (required, max:120)",
+  "channels": ["email", "push"],
+  "variables": { "name": "Alex" },
+  "idempotency_key": "string (optional, max:100)"
+}
+```
+
+---
+
+## Messaging Service (Port 8003)
+
+### Deliveries
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/deliveries` | Admin | Create delivery batch |
+| `GET` | `/api/v1/deliveries/{uuid}` | Admin | Get delivery with attempts |
+| `POST` | `/api/v1/deliveries/{uuid}/retry` | Admin | Retry failed delivery |
+
+### Create Deliveries Request Body
+
+```json
+{
+  "notification_uuid": "string (required, uuid)",
+  "user_uuid": "string (required, uuid)",
+  "deliveries": [
+    {
+      "channel": "email|whatsapp|push",
+      "recipient": "string (optional)",
+      "subject": "string (optional)",
+      "content": "string (optional)",
+      "payload": {}
+    }
+  ]
+}
+```
+
+---
+
+## Health Endpoints (All Services)
+
+| Service | URL |
+|---------|-----|
+| Admin Dashboard | `GET http://localhost:8000/health` |
+| User Service | `GET http://localhost:8001/api/v1/health` |
+| Notification Service | `GET http://localhost:8002/api/v1/health` |
+| Messaging Service | `GET http://localhost:8003/api/v1/health` |
+| Template Service | `GET http://localhost:8004/api/v1/health` |
 
 ---
 
@@ -133,16 +146,15 @@ This document defines the REST API contracts between microservices in the Notifi
 
 ```
 Admin Dashboard (8000)
-  ├── → User Service (8001)          [User CRUD, Auth]
-  ├── → Notification Service (8002)  [Notification management]
-  ├── → Messaging Service (8003)     [Channel monitoring]
-  └── → Template Service (8004)      [Template management]
+  ├──► User Service (8001)           [Auth, admin/user CRUD, preferences, devices]
+  ├──► Notification Service (8002)   [Notification CRUD, retry]
+  ├──► Messaging Service (8003)      [Delivery tracking]
+  └──► Template Service (8004)       [Template CRUD, render preview]
 
 Notification Service (8002)
-  ├── → User Service (8001)          [Resolve recipients]
-  ├── → Template Service (8004)      [Render templates]
-  └── → Messaging Service (8003)     [Dispatch messages]
-
-Messaging Service (8003)
-  └── → Notification Service (8002)  [Report delivery status]
+  ├──► User Service (8001)           [Validate user, fetch preferences]
+  ├──► Template Service (8004)       [Render template]
+  └──► Messaging Service (8003)      [Dispatch deliveries]
 ```
+
+User Service and Template Service are **leaf services** — they do not call other internal services.

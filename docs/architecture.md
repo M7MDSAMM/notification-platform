@@ -1,93 +1,187 @@
-# Notification Platform Architecture
+# Architecture
 
 ## Services & Ports
-| Service | Type | Port | Primary Responsibilities | Data Ownership |
-| --- | --- | --- | --- | --- |
-| Admin Dashboard | Laravel web app (server-rendered) | 8000 | Admin UI, session auth, orchestration of user/template/notification actions via internal APIs | Admin accounts, dashboard settings |
-| User Service | Laravel API (stateless JSON) | 8001 | Admin auth (JWT), admin profile, recipient user CRUD, preferences, devices | Admins, Users, Preferences, Devices |
-| Notification Service | Laravel API + workers | 8002 | Notification creation, scheduling, rendering coordination, delivery tracking | Notifications, Schedules, Delivery logs |
-| Messaging Service | Laravel API + workers | 8003 | Channel provider abstraction, dispatch, provider failover, delivery callbacks | Messages, Provider configs |
-| Template Service | Laravel API | 8004 | Template CRUD, versioning, rendering | Templates, Template versions |
+
+| Service | Type | Port | Database | Primary Responsibilities |
+|---------|------|------|----------|-------------------------|
+| Admin Dashboard | Laravel web app (Blade + Tailwind) | 8000 | `np_admin_dashboard` | Admin UI, session auth, orchestration via REST |
+| User Service | Laravel API (stateless JSON) | 8001 | `np_user_service` | Admin auth (JWT), admin CRUD, recipient users, preferences, devices |
+| Notification Service | Laravel API + queue workers | 8002 | `np_notification_service` | Notification orchestration, idempotency, rate limiting, status tracking |
+| Messaging Service | Laravel API + queue workers | 8003 | `np_messaging_service` | Channel provider abstraction, delivery dispatch, attempt tracking |
+| Template Service | Laravel API | 8004 | `np_template_service` | Template CRUD, versioning, variable-based rendering |
+
+---
 
 ## Auth Model
-- **Admin authentication** is issued by **User Service** (`POST /api/v1/admin/auth/login`). Returns a JWT (`access_token`, `expires_in`, `token_type`).
-- Admin Dashboard stores the JWT server-side in the session and caches the admin profile fetched from `GET /api/v1/admin/me`. Browser only holds the session cookie.
-- Admin routes in User Service require the `Authorization: Bearer <JWT>` header; dashboard enforces its own session middleware before rendering pages.
-- Recipient users (non-admin) are managed via User Service APIs; no roles/permissions for users.
+
+- **Admin authentication** is issued by **User Service** (`POST /api/v1/admin/auth/login`). Returns an RS256-signed JWT with role claims (`admin` or `super_admin`).
+- Admin Dashboard stores the JWT server-side in the session and caches the admin profile from `GET /api/v1/admin/me`. The browser only holds a session cookie.
+- All API services validate the JWT using the User Service's public key via `JwtAdminAuthMiddleware`.
+- Recipient users are managed entities with no authentication flow — they are created and managed by admins.
+
+See [auth.md](auth.md) for the full auth deep-dive.
+
+---
 
 ## Data Ownership
-- Each service owns its database schema; no cross-service DB access.
-- Admins and recipient user records live in **User Service**; Admin Dashboard persists only admin session state and UI settings.
-- Notifications, templates, messages, and preferences remain within their respective services; cross-service reads are via HTTP calls only.
 
-## Correlation ID Propagation
-- Middleware in both Admin Dashboard and User Service ensures every request has `X-Correlation-Id` (generated as UUID when absent) and echoes it in responses.
-- Admin Dashboard forwards the same header on outbound calls to User Service so request chains can be traced end-to-end.
-- Structured JSON logs include `correlation_id` for inbound and outbound events.
+- Each service owns its database schema. No cross-service DB access.
+- Admins and recipient users live in **User Service**.
+- Admin Dashboard stores only session/cache data — no business entities.
+- Cross-service data is accessed exclusively via REST APIs.
+
+See [database-ownership.md](database-ownership.md) for the full table inventory.
+
+---
+
+## Inter-Service Communication
+
+All communication is synchronous REST over HTTP/JSON. Every request carries:
+- `Authorization: Bearer <JWT>` — forwarded from the original admin request
+- `X-Correlation-Id` — for distributed tracing across service boundaries
+
+```
+Admin Dashboard (8000)
+  ├──► User Service (8001)           [Auth, users, preferences, devices]
+  ├──► Notification Service (8002)   [Create/view notifications, retry]
+  ├──► Messaging Service (8003)      [View delivery status]
+  └──► Template Service (8004)       [Manage templates]
+
+Notification Service (8002)
+  ├──► User Service (8001)           [Validate user, fetch preferences]
+  ├──► Template Service (8004)       [Render template]
+  └──► Messaging Service (8003)      [Dispatch deliveries]
+```
+
+**User Service** and **Template Service** are leaf services — they do not call other internal services.
+
+---
 
 ## Diagrams
 
 ### System Context
+
 ```mermaid
 graph LR
-    Admin[Admin User] -->|HTTPS\nSession cookie| AD[Admin Dashboard :8000]
-    AD -->|REST JSON\nAuthorization: Bearer| US[User Service :8001]
-    AD -->|REST JSON| NS[Notification Service :8002]
-    AD -->|REST JSON| TS[Template Service :8004]
-    AD -->|REST JSON| MS[Messaging Service :8003]
-    NS --> TS
-    NS --> US
-    NS --> MS
-    MS --> Ext[External Providers\n(Twilio, Mailgun, FCM, APNs)]
+    Admin[Admin User] -->|HTTPS / Session cookie| AD[Admin Dashboard :8000]
+    AD -->|REST + Bearer JWT| US[User Service :8001]
+    AD -->|REST + Bearer JWT| NS[Notification Service :8002]
+    AD -->|REST + Bearer JWT| TS[Template Service :8004]
+    AD -->|REST + Bearer JWT| MS[Messaging Service :8003]
+    NS -->|REST + Bearer JWT| US
+    NS -->|REST + Bearer JWT| TS
+    NS -->|REST + Bearer JWT| MS
+    MS --> Ext[External Providers\nEmail / WhatsApp / Push]
 ```
 
 ### Sequence: Admin Login
+
 ```mermaid
 sequenceDiagram
     actor Admin
     participant AD as Admin Dashboard (:8000)
     participant US as User Service (:8001)
     Admin->>AD: GET /login
-    AD-->>Admin: Render login form (sets/forwards X-Correlation-Id)
+    AD-->>Admin: Render login form
     Admin->>AD: POST /login (email, password)
-    AD->>US: POST /api/v1/admin/auth/login<br/>Headers: X-Correlation-Id, Accept: application/json
-    US-->>AD: 200 {access_token, token_type, expires_in}
-    AD->>US: GET /api/v1/admin/me<br/>Authorization: Bearer access_token
+    AD->>US: POST /api/v1/admin/auth/login
+    US-->>AD: 200 {access_token, expires_in}
+    AD->>US: GET /api/v1/admin/me (Bearer token)
     US-->>AD: 200 {admin profile}
-    AD-->>Admin: Redirect / (session set with JWT + profile)
+    AD-->>Admin: Redirect / (session stores JWT + profile)
 ```
 
-### Sequence: User Management (list users)
+### Sequence: Create Notification (Orchestration)
+
 ```mermaid
 sequenceDiagram
     actor Admin
-    participant AD as Admin Dashboard
-    participant US as User Service
-    Admin->>AD: GET /users
-    AD->>US: GET /api/v1/users<br/>Authorization: Bearer admin JWT<br/>X-Correlation-Id
-    US-->>AD: 200 {data: [users], meta.pagination}
-    AD-->>Admin: Render users table
+    participant NS as Notification Service (:8002)
+    participant US as User Service (:8001)
+    participant TS as Template Service (:8004)
+    participant MS as Messaging Service (:8003)
+
+    Admin->>NS: POST /api/v1/notifications
+    NS->>NS: Check idempotency key
+    NS->>US: GET /users/{uuid} (validate active)
+    US-->>NS: 200 User data
+    NS->>US: GET /users/{uuid}/preferences
+    US-->>NS: 200 Channel preferences
+    NS->>NS: Rate limit check (5/min/user)
+    NS->>TS: POST /templates/{key}/render
+    TS-->>NS: 200 Rendered content
+    NS->>NS: Create notification + attempts
+    NS->>MS: POST /deliveries (batch)
+    MS-->>NS: 201 Delivery references
+    NS->>NS: Update status → sent
+    NS-->>Admin: 201 Notification created
 ```
 
-### Component Diagram (logical)
+### Sequence: Message Delivery
+
+```mermaid
+sequenceDiagram
+    participant NS as Notification Service
+    participant MS as Messaging Service (:8003)
+    participant Q as Queue Worker
+    participant P as Provider (Email/Push/WhatsApp)
+
+    NS->>MS: POST /api/v1/deliveries
+    MS->>MS: Create Delivery records
+    MS->>Q: Dispatch DispatchDeliveryJob (per channel)
+    Q->>P: Send message
+    P-->>Q: Success / Failure
+    Q->>MS: Create DeliveryAttempt, update Delivery status
+    MS-->>NS: 201 Delivery references
+```
+
+### Component Diagram
+
 ```mermaid
 graph TD
-    subgraph Admin Dashboard (:8000)
+    subgraph Admin Dashboard :8000
         UI[Blade Views / Controllers]
-        AuthSess[Session Auth\nstores admin JWT]
-        Client[UserServiceClient\n(Guzzle)]
-        UI --> AuthSess
-        UI --> Client
+        Session[Session Auth<br/>stores admin JWT]
+        DashClients[Service Clients<br/>User / Notification / Template / Messaging]
     end
 
-    subgraph User Service (:8001)
-        Middleware[Correlation & JWT Middleware]
-        Controllers[Admin/User Controllers]
-        Domain[Domain Services]
-        DB[(MySQL np_user_service)]
-        Controllers --> Domain --> DB
+    subgraph User Service :8001
+        USCtrl[Controllers]
+        USSvc[Services]
+        USDB[(MySQL<br/>np_user_service)]
+        USCtrl --> USSvc --> USDB
     end
 
-    UI -->|REST| Controllers
-    Client -->|REST| Controllers
+    subgraph Notification Service :8002
+        NSCtrl[NotificationController]
+        Orch[OrchestratorService]
+        NSClients[Clients<br/>User / Template / Messaging]
+        NSDB[(MySQL<br/>np_notification_service)]
+        NSCtrl --> Orch --> NSClients
+        Orch --> NSDB
+    end
+
+    subgraph Template Service :8004
+        TSCtrl[Controllers]
+        TSSvc[RenderService]
+        TSDB[(MySQL<br/>np_template_service)]
+        TSCtrl --> TSSvc --> TSDB
+    end
+
+    subgraph Messaging Service :8003
+        MSCtrl[DeliveryController]
+        MSSvc[DeliveryService]
+        MSProv[Providers<br/>Email / WhatsApp / Push]
+        MSDB[(MySQL<br/>np_messaging_service)]
+        MSCtrl --> MSSvc --> MSProv
+        MSSvc --> MSDB
+    end
+
+    DashClients -->|REST| USCtrl
+    DashClients -->|REST| NSCtrl
+    DashClients -->|REST| TSCtrl
+    DashClients -->|REST| MSCtrl
+    NSClients -->|REST| USCtrl
+    NSClients -->|REST| TSCtrl
+    NSClients -->|REST| MSCtrl
 ```
