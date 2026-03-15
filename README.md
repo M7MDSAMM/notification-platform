@@ -210,6 +210,7 @@ CREATE DATABASE IF NOT EXISTS np_template_service   CHARACTER SET utf8mb4 COLLAT
 
 ## Additional Documentation
 - [Architecture](docs/architecture.md)
+- [Observability & Logging](docs/observability.md)
 
 ---
 
@@ -304,13 +305,19 @@ curl http://localhost:8003/health
 curl http://localhost:8004/health
 ```
 
-Each returns:
+Each returns an enriched JSON envelope:
 
 ```json
 {
-    "service": "Service Name",
-    "status": "ok",
-    "time": "2026-02-16T12:00:00+00:00"
+    "success": true,
+    "data": {
+        "service": "user-service",
+        "status": "healthy",
+        "timestamp": "2026-03-15T12:00:00+00:00",
+        "version": "1.0.0",
+        "environment": "local"
+    },
+    "correlation_id": ""
 }
 ```
 
