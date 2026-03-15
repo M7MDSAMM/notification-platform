@@ -210,6 +210,7 @@ CREATE DATABASE IF NOT EXISTS np_template_service   CHARACTER SET utf8mb4 COLLAT
 
 ## Additional Documentation
 - [Architecture](docs/architecture.md)
+- [API Response Standard](docs/api-response-standard.md)
 - [Observability & Logging](docs/observability.md)
 
 ---
